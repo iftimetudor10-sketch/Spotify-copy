@@ -9,7 +9,7 @@ export function formatTime(seconds: number) {
 
 export function placeholderColor(track: Track) {
   const hash = [...track.id].reduce((value, char) => value + char.charCodeAt(0), 0)
-  const hues = [153, 24, 42, 202, 82, 330]
+  const hues = [12, 215, 338, 42, 188, 255]
   return `hsl(${hues[hash % hues.length]} 48% 30%)`
 }
 
