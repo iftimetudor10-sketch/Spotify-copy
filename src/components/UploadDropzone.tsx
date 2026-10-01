@@ -14,7 +14,7 @@ export function UploadDropzone({ onFiles }: { onFiles: (files: File[]) => void }
       <h2>Bring your collection in</h2>
       <p>Drop MP3 files here, or open a folder from your device.</p>
       <button className="button button-light" onClick={() => inputRef.current?.click()}><FolderOpen size={17} /> Choose MP3s</button>
-      <small>Files stay on this device. Nothing is uploaded to a server.</small>
+      <small>MP3s upload to your private group library. Maximum file size: 50 MB.</small>
     </div>
   )
 }

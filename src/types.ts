@@ -4,6 +4,8 @@ export type ThemeMode = 'dark' | 'light'
 
 export interface Track {
   id: string
+  groupId?: string
+  uploaderId?: string
   title: string
   artist: string
   album: string
@@ -11,6 +13,8 @@ export interface Track {
   year?: number
   genre?: string
   artworkBlobId?: string
+  artworkPath?: string
+  audioPath?: string
   contentHash?: string
   fileName: string
   createdAt: number
@@ -25,6 +29,8 @@ export interface BlobDoc {
 
 export interface Playlist {
   id: string
+  groupId?: string
+  createdBy?: string
   name: string
   trackIds: string[]
   createdAt: number

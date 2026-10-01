@@ -8,7 +8,7 @@ export interface ParsedAudio {
 export async function parseAudioFile(file: File): Promise<ParsedAudio> {
   const fallbackTitle = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim()
   try {
-    const { parseBlob } = await import('music-metadata-browser')
+    const { parseBlob } = await import('music-metadata')
     const metadata = await parseBlob(file, { duration: true })
     const common = metadata.common
     const picture = common.picture?.[0]

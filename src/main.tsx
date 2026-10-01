@@ -1,14 +1,14 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import App from './App'
-import { PlayerProvider } from './hooks/usePlayer'
+import { SignedInApp } from './components/SignedInApp'
+import { AuthProvider } from './hooks/useAuth'
 import './styles/tailwind.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <PlayerProvider><App /></PlayerProvider>
+      <AuthProvider><SignedInApp /></AuthProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )

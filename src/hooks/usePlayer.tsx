@@ -7,9 +7,10 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { db, getSettings, saveSettings } from '../db/indexedDb'
 import { createObjectUrl } from '../lib/audio'
 import { defaultSettings, type AppSettings, type RepeatMode, type Track } from '../types'
+import { useAuth } from './useAuthContext'
+import { getTrack, getUserSettings, getDefaultUserSettings, loadTrackAudio, loadTrackArtwork, saveUserSettings } from '../lib/library'
 
 interface PlayerContextValue {
   trackIds: string[]
@@ -40,6 +41,9 @@ interface PlayerContextValue {
 const PlayerContext = createContext<PlayerContextValue | null>(null)
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
+  const { group, user } = useAuth()
+  const groupId = group?.id
+  const userId = user?.id
   const audioRef = useRef<HTMLAudioElement>(null)
   const objectUrlRef = useRef<string | null>(null)
   const requestRef = useRef(0)
@@ -54,10 +58,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [repeat, setRepeat] = useState<RepeatMode>('off')
   const [shuffle, setShuffle] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
 
   const persist = useCallback(
     (overrides: Partial<AppSettings> = {}) => {
-      void saveSettings({
+      if (!userId) return
+      void saveUserSettings(userId, {
         ...defaultSettings,
         queue: trackIds,
         currentIndex,
@@ -67,41 +73,51 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         lastPosition: currentTime,
         ...overrides,
       })
-    }, [currentIndex, currentTime, currentTrack, repeat, shuffle, trackIds],
+    }, [currentIndex, currentTime, currentTrack, repeat, shuffle, trackIds, userId],
   )
 
   const loadTrack = useCallback(async (id: string, autoplay: boolean, startAt = 0) => {
     const requestId = ++requestRef.current
-    const [track, audioBlob] = await Promise.all([db.tracks.get(id), db.blobs.get(id)])
-    if (requestId !== requestRef.current) return
-    if (!track || !audioBlob) {
-      setIsPlaying(false)
-      return
-    }
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    objectUrlRef.current = createObjectUrl(audioBlob.blob)
-    setCurrentTrack(track)
-    setCurrentTime(startAt)
-    currentTimeRef.current = startAt
-    setDuration(track.duration)
-    const audio = audioRef.current
-    if (!audio) return
-    audio.src = objectUrlRef.current
-    audio.load()
-    if (startAt > 0) {
-      audio.addEventListener('loadedmetadata', () => { audio.currentTime = startAt }, { once: true })
-    }
-    if (autoplay) {
-      try {
-        await audio.play()
-        setIsPlaying(true)
-      } catch {
+    if (!groupId) return
+    try {
+      const track = await getTrack(groupId, id)
+      if (requestId !== requestRef.current) return
+      if (!track) {
+        setIsPlaying(false)
+        return
+      }
+      const audioBlob = await loadTrackAudio(track)
+      if (requestId !== requestRef.current) return
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+      objectUrlRef.current = createObjectUrl(audioBlob)
+      setCurrentTrack(track)
+      setCurrentTime(startAt)
+      currentTimeRef.current = startAt
+      setDuration(track.duration)
+      const audio = audioRef.current
+      if (!audio) return
+      audio.src = objectUrlRef.current
+      audio.load()
+      if (startAt > 0) {
+        audio.addEventListener('loadedmetadata', () => { audio.currentTime = startAt }, { once: true })
+      }
+      if (autoplay) {
+        try {
+          await audio.play()
+          setIsPlaying(true)
+        } catch {
+          setIsPlaying(false)
+        }
+      } else {
         setIsPlaying(false)
       }
-    } else {
-      setIsPlaying(false)
+    } catch (error) {
+      if (requestId === requestRef.current) {
+        setIsPlaying(false)
+        console.error('Could not load this group track', error)
+      }
     }
-  }, [])
+  }, [groupId])
 
   const playTrack = useCallback(async (id: string, nextQueue?: string[]) => {
     const queue = nextQueue ?? (trackIds.includes(id) ? trackIds : [...trackIds, id])
@@ -227,17 +243,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [persist])
 
   useEffect(() => {
+    if (!userId) return
     let active = true
-    void getSettings().then((settings) => {
-      if (!active || !settings) return
-      setTrackIds(settings.queue ?? [])
-      setCurrentIndex(settings.currentIndex ?? -1)
-      setRepeat(settings.repeat ?? 'off')
-      setShuffle(settings.shuffle ?? false)
-      if (settings.lastTrackId) void loadTrack(settings.lastTrackId, false, settings.lastPosition ?? 0)
+    setSettingsLoaded(false)
+    void getUserSettings(userId).then((settings) => {
+      if (!active) return
+      if (settings) {
+        setTrackIds(settings.queue ?? [])
+        setCurrentIndex(settings.currentIndex ?? -1)
+        setRepeat(settings.repeat ?? 'off')
+        setShuffle(settings.shuffle ?? false)
+        if (settings.lastTrackId) void loadTrack(settings.lastTrackId, false, settings.lastPosition ?? 0)
+      } else {
+        const defaults = getDefaultUserSettings()
+        setTrackIds(defaults.queue)
+        setCurrentIndex(defaults.currentIndex)
+        setRepeat(defaults.repeat)
+        setShuffle(defaults.shuffle)
+      }
+      setSettingsLoaded(true)
+    }).catch((error: unknown) => {
+      console.error('Could not load player settings', error)
+      if (active) setSettingsLoaded(true)
     })
     return () => { active = false }
-  }, [loadTrack])
+  }, [userId, loadTrack])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -255,12 +285,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       })
     }
     publishMetadata([{ src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml' }])
-    if (currentTrack.artworkBlobId) {
-      void db.blobs.get(currentTrack.artworkBlobId).then((record) => {
-        if (!active || !record) return
-        artworkUrl = URL.createObjectURL(record.blob)
-        publishMetadata([{ src: artworkUrl, sizes: '512x512', type: record.blob.type || 'image/jpeg' }])
-      })
+    if (currentTrack.artworkPath) {
+      void loadTrackArtwork(currentTrack).then((blob) => {
+        if (!active || !blob) return
+        artworkUrl = URL.createObjectURL(blob)
+        publishMetadata([{ src: artworkUrl, sizes: '512x512', type: blob.type || 'image/jpeg' }])
+      }).catch(() => undefined)
     }
     const actions: [MediaSessionAction, MediaSessionActionHandler][] = [
       ['play', () => toggle()],
@@ -279,7 +309,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [currentTrack, next, previous, toggle])
 
   useEffect(() => {
-    void saveSettings({
+    if (!userId || !settingsLoaded) return
+    void saveUserSettings(userId, {
       ...defaultSettings,
       queue: trackIds,
       currentIndex,
@@ -287,8 +318,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       shuffle,
       lastTrackId: currentTrack?.id,
       lastPosition: currentTimeRef.current,
-    })
-  }, [currentIndex, repeat, shuffle, trackIds, currentTrack])
+    }).catch((error: unknown) => console.error('Could not save player settings', error))
+  }, [currentIndex, repeat, shuffle, trackIds, currentTrack, settingsLoaded, userId])
 
   useEffect(() => () => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -310,16 +341,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const time = event.currentTarget.currentTime
           currentTimeRef.current = time
           setCurrentTime(time)
-          const bucket = Math.floor(time / 10)
+          const bucket = Math.floor(time / 30)
           if (bucket !== savedPositionBucketRef.current) {
             savedPositionBucketRef.current = bucket
-            void saveSettings({ ...defaultSettings, queue: trackIds, currentIndex, repeat, shuffle, lastTrackId: currentTrack?.id, lastPosition: time })
+            if (userId && settingsLoaded) void saveUserSettings(userId, { ...defaultSettings, queue: trackIds, currentIndex, repeat, shuffle, lastTrackId: currentTrack?.id, lastPosition: time }).catch((error: unknown) => console.error('Could not save playback position', error))
           }
         }}
         onDurationChange={(event) => setDuration(event.currentTarget.duration || 0)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
-        onEnded={() => { if (repeat === 'one') void next(); else void next() }}
+        onEnded={() => void next()}
       />
       {children}
     </PlayerContext.Provider>
@@ -327,7 +358,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 }
 
 export function usePlayer() {
-  const value = useContext(PlayerContext)
-  if (!value) throw new Error('usePlayer must be used inside PlayerProvider')
-  return value
+  const context = useContext(PlayerContext)
+  if (!context) throw new Error('usePlayer must be used inside PlayerProvider')
+  return context
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { db } from '../db/indexedDb'
+import { loadTrackArtwork } from '../lib/library'
 import { initials, placeholderColor } from '../lib/audio'
 import type { Track } from '../types'
 
@@ -8,18 +8,18 @@ export function Artwork({ track, className = '' }: { track: Track; className?: s
   useEffect(() => {
     let active = true
     let url: string | undefined
-    if (track.artworkBlobId) {
-      void db.blobs.get(track.artworkBlobId).then((record) => {
-        if (!active || !record) return
-        url = URL.createObjectURL(record.blob)
+    if (track.artworkPath) {
+      void loadTrackArtwork(track).then((blob) => {
+        if (!active || !blob) return
+        url = URL.createObjectURL(blob)
         setSrc(url)
-      })
+      }).catch(() => setSrc(undefined))
     } else setSrc(undefined)
     return () => {
       active = false
       if (url) URL.revokeObjectURL(url)
     }
-  }, [track.artworkBlobId])
+  }, [track])
 
   return (
     <div className={`artwork ${className}`} style={{ background: placeholderColor(track) }}>

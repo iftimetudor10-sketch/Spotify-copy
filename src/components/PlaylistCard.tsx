@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import type { Playlist, Track } from '../types'
 import { Artwork } from './Artwork'
 
-export function PlaylistCard({ playlist, tracks, onDelete, onRename }: { playlist: Playlist; tracks: Track[]; onDelete: (playlist: Playlist) => void; onRename: (playlist: Playlist) => void }) {
+export function PlaylistCard({ playlist, tracks, onDelete, onRename, canManage = false }: { playlist: Playlist; tracks: Track[]; onDelete: (playlist: Playlist) => void; onRename: (playlist: Playlist) => void; canManage?: boolean }) {
   const first = playlist.trackIds.map((id) => tracks.find((track) => track.id === id)).find((track) => track !== undefined)
   return (
     <article className="playlist-card">
@@ -12,8 +12,8 @@ export function PlaylistCard({ playlist, tracks, onDelete, onRename }: { playlis
         <span>{String(playlist.trackIds.length).padStart(2, '0')}</span>
       </Link>
       <div className="playlist-card-copy"><Link to={`/playlists/${playlist.id}`}><strong>{playlist.name}</strong></Link><small>{playlist.trackIds.length} tracks</small></div>
-      <button className="icon-button" aria-label={`Rename ${playlist.name}`} onClick={() => onRename(playlist)}><Pencil size={15} /></button>
-      <button className="icon-button" aria-label={`Delete ${playlist.name}`} onClick={() => onDelete(playlist)}><Trash2 size={15} /></button>
+      {canManage && <button className="icon-button" aria-label={`Rename ${playlist.name}`} onClick={() => onRename(playlist)}><Pencil size={15} /></button>}
+      {canManage && <button className="icon-button" aria-label={`Delete ${playlist.name}`} onClick={() => onDelete(playlist)}><Trash2 size={15} /></button>}
     </article>
   )
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { db } from '../db/indexedDb'
+import { useAuth } from './useAuthContext'
+import { listPlaylists, listTracks } from '../lib/library'
 import type { Playlist, Track } from '../types'
 
 export function notifyLibraryChanged() {
@@ -7,22 +8,33 @@ export function notifyLibraryChanged() {
 }
 
 export function useIndexedDb() {
+  const { group } = useAuth()
+  const groupId = group?.id
   const [tracks, setTracks] = useState<Track[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
+    if (!groupId) {
+      setTracks([])
+      setPlaylists([])
+      setLoading(false)
+      return
+    }
+    setLoading(true)
     try {
       const [nextTracks, nextPlaylists] = await Promise.all([
-        db.tracks.orderBy('createdAt').reverse().toArray(),
-        db.playlists.orderBy('updatedAt').reverse().toArray(),
+        listTracks(groupId),
+        listPlaylists(groupId),
       ])
       setTracks(nextTracks)
       setPlaylists(nextPlaylists)
+    } catch (error) {
+      console.error('Could not load the group library', error)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [groupId])
 
   useEffect(() => {
     void refresh()

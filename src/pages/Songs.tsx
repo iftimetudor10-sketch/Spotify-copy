@@ -6,13 +6,16 @@ import { SearchBar } from '../components/SearchBar'
 import { useToast } from '../components/Toast'
 import { useIndexedDb } from '../hooks/useIndexedDb'
 import { usePlayer } from '../hooks/usePlayer'
-import { db } from '../db/indexedDb'
+import { useAuth } from '../hooks/useAuthContext'
+import { createPlaylist, setPlaylistTracks } from '../lib/library'
 import type { Track } from '../types'
 
 export function Songs() {
   const { tracks, playlists } = useIndexedDb()
   const player = usePlayer()
   const toast = useToast()
+  const { group, user } = useAuth()
+  const manageablePlaylists = playlists.filter((playlist) => group?.role === 'admin' || playlist.createdBy === user?.id)
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
@@ -34,15 +37,16 @@ export function Songs() {
     if (!playlistId) {
       const name = window.prompt('Name your new playlist')?.trim()
       if (!name) return
-      const now = Date.now()
-      await db.playlists.add({ id: crypto.randomUUID(), name, trackIds: selected, createdAt: now, updatedAt: now })
+      if (!group || !user) return
+      await createPlaylist(group.id, user.id, name, selected)
       window.dispatchEvent(new Event('folio:library-change'))
       toast(`Added ${selected.length} tracks to ${name}`)
     } else {
-      const playlist = await db.playlists.get(playlistId)
+      const playlist = playlists.find((item) => item.id === playlistId)
       if (!playlist) return
       const additions = selected.filter((id) => !playlist.trackIds.includes(id))
-      await db.playlists.update(playlistId, { trackIds: [...playlist.trackIds, ...additions], updatedAt: Date.now() })
+      if (!group) return
+      await setPlaylistTracks(group.id, playlistId, [...playlist.trackIds, ...additions])
       window.dispatchEvent(new Event('folio:library-change'))
       toast(`Added ${additions.length} tracks to ${playlist.name}`)
     }
@@ -52,7 +56,7 @@ export function Songs() {
     <div className="page-kicker"><span className="kicker-line" /> THE ARCHIVE</div>
     <div className="songs-hero"><div className="hero-disc"><Music2 size={27} /></div><div><p className="eyebrow">YOUR LIBRARY</p><h1>All songs<span className="heading-period">.</span></h1><p className="page-intro">{tracks.length} track{tracks.length === 1 ? '' : 's'}, all yours.</p></div><button className="button button-accent hero-play" disabled={!tracks.length} onClick={() => shownTracks[0] && playTrack(shownTracks[0])}><Play size={17} fill="currentColor" /> Play all</button></div>
     <div className="library-toolbar"><SearchBar value={query} onChange={setQuery} /><label className="sort-select"><ArrowDownWideNarrow size={16} /><span className="sr-only">Sort songs</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Recently added</option><option value="title">Title</option><option value="artist">Artist</option><option value="album">Album</option></select></label></div>
-    {selected.length > 0 && <div className="selection-toolbar"><span>{selected.length} selected</span><button className="button button-dark" onClick={() => { player.enqueue(selected); toast(`Added ${selected.length} tracks to queue`) }}><ListPlus size={16} /> Add to queue</button><select aria-label="Choose playlist" value={playlistId} onChange={(event) => setPlaylistId(event.target.value)}><option value="">New playlist…</option>{playlists.map((playlist) => <option key={playlist.id} value={playlist.id}>{playlist.name}</option>)}</select><button className="button button-outline" onClick={() => void addSelected()}><Plus size={16} /> Add to playlist</button></div>}
-    {!tracks.length ? <div className="empty-state"><div className="empty-orbit"><Music2 size={28} /></div><h2>Your library begins here</h2><p>Bring in a few MP3s and they’ll be waiting here, even offline.</p><button className="button button-accent" onClick={() => navigate('/upload')}>Import your music</button></div> : <SongList tracks={shownTracks} selected={selected} onSelect={toggleSelection} onPlay={playTrack} onQueue={(track) => { player.enqueue([track.id]); toast(`Added ${track.title} to queue`) }} onPlayNext={(track) => { player.playNext(track.id); toast(`${track.title} will play next`) }} activeId={player.currentTrack?.id} />}
+    {selected.length > 0 && <div className="selection-toolbar"><span>{selected.length} selected</span><button className="button button-dark" onClick={() => { player.enqueue(selected); toast(`Added ${selected.length} tracks to queue`) }}><ListPlus size={16} /> Add to queue</button><select aria-label="Choose playlist" value={playlistId} onChange={(event) => setPlaylistId(event.target.value)}><option value="">New playlist…</option>{manageablePlaylists.map((playlist) => <option key={playlist.id} value={playlist.id}>{playlist.name}</option>)}</select><button className="button button-outline" onClick={() => void addSelected()}><Plus size={16} /> Add to playlist</button></div>}
+    {!tracks.length ? <div className="empty-state"><div className="empty-orbit"><Music2 size={28} /></div><h2>Your group library begins here</h2><p>Upload MP3s and everyone in your group can play them.</p><button className="button button-accent" onClick={() => navigate('/upload')}>Import your music</button></div> : <SongList tracks={shownTracks} selected={selected} onSelect={toggleSelection} onPlay={playTrack} onQueue={(track) => { player.enqueue([track.id]); toast(`Added ${track.title} to queue`) }} onPlayNext={(track) => { player.playNext(track.id); toast(`${track.title} will play next`) }} activeId={player.currentTrack?.id} />}
   </section>
 }

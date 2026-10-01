@@ -1,18 +1,18 @@
-# Folio Local Music
+# Folio Group Music
 
-A private, Spotify-style player for MP3s you already own. Folio has no account, API, analytics, or external music service: track metadata, artwork, playlists, settings, and audio blobs live in the browser's IndexedDB.
+A private group library for MP3s your friends upload and play together. Folio does not search or provide a public music catalog. User accounts and metadata use Supabase Auth and Postgres; audio and artwork use a private Supabase Storage bucket. Vercel serves the Vite frontend.
 
 ## Features
 
-- Import multiple MP3s by drag-and-drop or file picker; read ID3 title, artist, album, year, genre, duration, and embedded cover art.
-- SHA-256 deduplication, with filename and duration as a fallback; tags fall back to the file name when parsing fails.
-- Search, sort, multi-select, and queue actions in the library.
-- Create, rename, and delete playlists; add/remove tracks and drag rows to reorder.
-- Persistent queue with play-next, remove, reorder, clear, shuffle, repeat, and session-position restoration.
+- Email/password signup, sign-in, password reset, and protected group library.
+- Create one group and issue one-time, seven-day invite codes for friends.
+- Upload MP3s with ID3 metadata and embedded cover art to the group's private storage.
+- SHA-256 deduplication, with filename and duration as a fallback.
+- Shared group track list; playlist edits are limited to the playlist owner and group admins.
+- Persistent per-account queue, playback position, theme, shuffle, and repeat settings.
 - Native audio playback, Media Session controls, responsive player bar, and a dedicated now-playing view.
 - Dark and light themes; keyboard-accessible controls, visible focus rings, and reduced-motion support.
-- Installable PWA shell and offline browsing/playback for audio already stored in IndexedDB.
-- JSON export/restore for track metadata, playlists, and settings.
+- Existing local MP3s can be uploaded from IndexedDB; local originals are retained.
 
 ## Screenshots
 
@@ -26,49 +26,61 @@ Add current UI captures in `docs/screenshots/` when available:
 
 - React 18, TypeScript (strict), Vite, React Router
 - Tailwind CSS build configuration with a small CSS-variable design system
-- Dexie / IndexedDB, `music-metadata-browser`, browser File, Audio, Media Session, and Service Worker APIs
+- Supabase Auth, Postgres Row Level Security, and private Storage
+- Dexie / IndexedDB for importing existing local libraries; `music-metadata-browser`, browser File, Audio, Media Session, and Service Worker APIs
 - Native drag-and-drop for queue and playlist ordering
 
 ## Data model
 
 ```mermaid
 erDiagram
-  TRACKS ||--o{ BLOBS : "audio blob by track id"
-  TRACKS ||--o| BLOBS : "artworkBlobId"
-  PLAYLISTS }o--o{ TRACKS : "ordered trackIds"
-  APP ||--|| SETTINGS : "settings record"
+  MUSIC_GROUPS ||--o{ GROUP_MEMBERS : contains
+  MUSIC_GROUPS ||--o{ TRACKS : owns
+  MUSIC_GROUPS ||--o{ PLAYLISTS : owns
+  TRACKS ||--o{ PLAYLIST_TRACKS : contains
+  PLAYLISTS ||--o{ PLAYLIST_TRACKS : orders
+  AUTH_USERS ||--o| USER_PREFERENCES : configures
   TRACKS {
-    string id PK
+    uuid id PK
+    uuid group_id FK
+    uuid uploader_id FK
     string title
     string artist
     string album
     number duration
-    number year
-    string genre
-    string artworkBlobId FK
     string contentHash
-    number createdAt
-    number updatedAt
+    string audioPath
+    string artworkPath
   }
-  BLOBS {
-    string id PK
-    string type
-    Blob blob
+  GROUP_MEMBERS {
+    uuid group_id PK
+    uuid user_id PK
+    string member_role
   }
   PLAYLISTS {
-    string id PK
+    uuid id PK
+    uuid group_id FK
+    uuid created_by FK
     string name
-    string[] trackIds
-    number createdAt
-    number updatedAt
   }
-  SETTINGS {
-    string id PK
-    object value
+  PLAYLIST_TRACKS {
+    uuid playlist_id PK
+    uuid track_id PK
+    integer position
+  }
+  USER_PREFERENCES {
+    uuid user_id PK
+    string theme
+    string repeat_mode
+    boolean shuffle
+    uuid[] queue_track_ids
+    integer current_index
+    uuid last_track_id
+    number last_position
   }
 ```
 
-The audio blob uses the track ID as its blob ID. Cover images use their own IDs referenced by `artworkBlobId`. The queue is an ordered list of track IDs plus a current index in the settings record. Dexie schema changes should increment the database version and add an explicit migration in `src/db/indexedDb.ts`.
+Every exposed table has explicit grants and row-level policies. Private storage paths are scoped to `group_id/user_id/track_id`; reads require group membership, uploads use the signed-in uploader's path, and only the uploader or an admin can delete a file. Invite codes are high-entropy random values; only their SHA-256 hashes are stored.
 
 ## Local development
 
@@ -79,7 +91,9 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. In development, **Add demo tracks** on the import screen seeds a few tiny generated WAV tones for quick UI/player checks; the action is not present in production.
+Copy `.env.example` to `.env.local` and fill in the Supabase project URL and publishable key. These are public client settings; do not put a Supabase secret/service-role key in a `VITE_` variable.
+
+Open the local URL printed by Vite. Without these settings, the app shows a setup message and authentication is unavailable.
 
 ```bash
 npm run lint
@@ -87,45 +101,37 @@ npm run build
 npm run preview
 ```
 
-The production build emits static files to `dist/`. No server, database credentials, environment variables, or backend are required.
+The production build emits static files to `dist/`. The deployed app requires its Supabase project to be configured separately.
 
-## Deploy to Vercel
+## Supabase Setup
 
-1. Push this project to a Git repository and import it in Vercel.
-2. Keep the detected Vite defaults, or set the build command to `npm run build` and output directory to `dist`.
-3. Deploy. `vercel.json` rewrites client-side routes to `index.html`.
-4. Use the deployed HTTPS URL once while online so the service worker can install its shell cache. Vercel's generated HTTPS deployment is suitable for PWA installation.
+1. Create a Supabase project on the Free plan.
+2. Open the SQL Editor and run `supabase/migrations/20261001000000_shared_music_library.sql`.
+3. Keep email/password signups and email confirmation enabled. Set the Auth Site URL to the Vercel app URL and add both `http://localhost:5173/**` and `http://127.0.0.1:5173/**` to the allowed redirect URLs for local development. Signup and password-reset emails return to the app's current origin.
+4. Configure a custom SMTP provider before inviting friends. Supabase's default sender is best-effort, limited to 2 emails per hour, and only delivers to addresses on the Supabase organization team. A free SMTP tier may be available from third parties, but requirements and limits vary; verify the provider's current terms and sender/domain requirements. Do not add friends as Supabase organization members to bypass this restriction; that grants project dashboard access. Do not disable confirmation just to work around email delivery without accepting that unverified addresses can be registered.
+5. Copy the Supabase project URL and publishable key into `.env.local` for local development. Add the same variables to Vercel for Production and Preview deployments.
+6. Deploy the Vite project to Vercel with build command `npm run build` and output directory `dist`. The existing rewrite handles React routes.
+7. Create an account, confirm the email, create the group, then use the invite button to generate a code for each friend. A code expires after 7 days and can be redeemed once.
 
-## Install and test offline
+The migration creates a private bucket with a 50 MiB per-file limit and allows MP3, JPEG, PNG, and WebP content types. Current Supabase Free limits list 1 GB file storage, 5 GB egress, 500 MB database size, and free projects may pause after a week of inactivity. Vercel Hobby is $0 for personal, non-commercial use. These limits can change; check [Supabase pricing](https://supabase.com/pricing) and [Vercel pricing](https://vercel.com/pricing) before launch. No plan offers unlimited free music hosting.
 
-1. Open the HTTPS deployment in a supported browser. Use the browser's Install app command (Chrome/Edge) or Add to Home Screen (Safari on iOS).
-2. Import one or more MP3s while online. Wait until the import summary confirms they were saved.
-3. Visit the library and playlists once so the app shell is cached.
-4. In browser developer tools, select **Network → Offline**, then reload `/songs`. Previously imported tracks can still be played because audio is read from IndexedDB, not the service worker cache.
-5. A first visit with no cached shell cannot run the app offline; the static offline page explains that it needs one online visit first.
+Never add a service-role/secret key to the frontend. The browser uses only the publishable key; Postgres grants, RLS, and Storage policies enforce access. Do not make the bucket public.
 
-The service worker caches the app shell and same-origin build assets, and uses a bounded cache-first strategy for fetched image requests. Embedded artwork and audio are stored in IndexedDB directly. The service worker does not attempt to duplicate either blob store.
+## Local Library Migration
 
-## Backup and restore
+The first visit after setup does not automatically upload tracks from IndexedDB. On **Import music**, use **Upload local MP3s** to send existing local MP3s to the group. Local originals remain in IndexedDB, and non-MP3 local records are skipped. Keep separate copies of important audio files; this app does not currently provide a cloud backup/export workflow.
 
-On the Playlists page, choose **Export JSON** to download track metadata, playlist membership/order, and app settings. **Restore JSON** merges the records by ID. Audio and cover blobs are intentionally excluded to keep the backup portable and small; after restoring on another browser/device, import the original MP3 files again. Matching content hashes prevent creating a duplicate track for an unchanged file, but metadata-only imports cannot recreate missing audio.
+## Tests and Security Checks
 
-## Acceptance walkthrough
+Run `npm run lint` and `npm run build`. With the Supabase CLI and local Docker database configured, run the SQL policy test with `supabase test db`.
 
-1. Go to **Import music**, choose a tagged MP3, and wait for the import summary.
-2. Open **All songs**; confirm title, artist, duration, and embedded cover art appear. Importing the same MP3 again should count as a duplicate.
-3. Select the track's queue action; open the bottom queue control and confirm it appears. Start playback, then collapse and reopen the queue.
-4. Create a playlist, open it, choose **Add songs**, and add the imported track.
-5. Add a second track and drag rows to reorder them. Reload the page and verify the new order persists.
-6. With the app shell loaded and tracks imported, take the browser offline, reload `/songs`, and play an imported track.
+Before inviting friends, verify that a second account can read and play group tracks but cannot access another group's records, alter another user's account settings, or delete another uploader's files. Test signup confirmation and password recovery with real non-team email addresses. Offline browsing may load the cached app shell, but cloud audio playback requires a network connection.
 
-## Troubleshooting and limitations
+Only upload music and artwork that you have the right to store and share with your group. The project does not provide music licensing or a public streaming catalog.
 
-- **Storage quota:** Browser quotas depend on the browser, device, and free disk space. Large libraries can fail with a quota message. Remove unused tracks in browser site data or use a device with more available storage. Folio cannot guarantee durable storage if the browser evicts site data.
-- **Keep data local:** Clearing site data, using private browsing, or switching browser profiles may remove the library. Export metadata regularly; keep original audio files separately.
-- **Restore behavior:** JSON backups do not contain audio/artwork blobs. Re-import original MP3s after restoring to regain playable tracks and embedded covers.
-- **Browser support:** Playback formats and Media Session actions vary. The app imports MP3 files only; playback is handled by the browser's native audio element.
-- **iOS/Safari:** Install prompts are browser-controlled; use Share → Add to Home Screen. Background playback, lock-screen artwork, storage eviction, and offline behavior may differ by iOS version. Keep the installed app open once online after an update.
-- **Offline first run:** Service workers require HTTPS (localhost is allowed in development) and an initial online visit. Browser audio stored in IndexedDB remains the source for offline playback.
-- **Tag parsing:** Malformed or unsupported tags fall back to the filename and unknown artist/album. SHA-256 uses Web Crypto; environments without it use the filename/duration fallback only if hashing fails (the import may otherwise show an error).
-- **Demo tracks:** Development seeding creates short generated WAV samples for interface checks; normal import accepts MP3 files.
+- **SMTP:** Supabase's default sender cannot deliver to arbitrary friend addresses. Configure custom SMTP; its free-tier status and requirements depend on the email provider.
+- **Quotas:** When free storage or egress limits are exhausted, uploads or playback may stop until usage resets or data is removed. The app does not promise unlimited storage.
+- **Offline:** Only the app shell is cached. Audio playback and cloud library operations need an internet connection.
+- **Local data:** Browser-local MP3s are not visible to other group members until uploaded. Migration retains local copies.
+- **Deletion:** Track rows and storage are private; account/group deletion and orphaned-file cleanup are not automated in this initial version.
+- **Email ownership:** Keep email confirmation enabled for real friend accounts. Do not share account passwords; each person should create their own account.
